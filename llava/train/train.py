@@ -665,72 +665,84 @@ class HuggingfaceSupervisedDataset(Dataset):
         # Load dataset in streaming mode to prevent memory issues
         self.dataset = load_dataset(data_path)
         self.train_data = self.dataset['train']
-        
+        max_samples=0
+        if max_samples > 0:  # Ensure max_samples is positive
+            self.train_data = self.train_data.select(range(min(max_samples, len(self.train_data))))
         # Initialize an empty list for storing processed data
         self.list_data_dict = []
         
         # Process data in smaller batches
         batch_size = 100  # Adjust this based on your memory constraints
         total_items = len(self.train_data)
-        
+
         rank0_print("formatting hf dataset inputs...")
-        
-        for i in range(0, total_items, batch_size):
-            batch = self.train_data.select(range(i, min(i + batch_size, total_items)))
+        # import gc
+        # gc.collect()
+        # for i in range(0, total_items, batch_size):
+        #     batch = self.train_data.select(range(i, min(i + batch_size, total_items)))
             
-            # Process the batch
-            batch_data = [{
-                'image': item['image'],
-                'conversations': item['conversations']
-            } for item in batch]
+        #     # Process the batch
+        #     batch_data = [{
+        #         'image': item['image'],
+        #         'conversations': item['conversations']
+        #     } for item in batch]
             
-            # Extend the list with batch data
-            self.list_data_dict.extend(batch_data)
+        #     # Extend the list with batch data
+        #     self.list_data_dict.extend(batch_data)
             
-            # Optional: Clear memory after each batch
-            if i % (batch_size * 10) == 0:
-                import gc
-                gc.collect()
+        #     # Optional: Clear memory after each batch
+        #     if i % (batch_size * 2) == 0:
                 
-            # Update progress
-            rank0_print(f"Processed {min(i + batch_size, total_items)}/{total_items} items")
+        #         gc.collect()
+                
+        #     # Update progress
+        #     rank0_print(f"Processed {min(i + batch_size, total_items)}/{total_items} items")
 
         self.tokenizer = tokenizer
         self.data_args = data_args
 
-# Helper method to process data in batches (optional)
-    def process_batch(self, batch):
-        return [{
-            'image': item['image'],
-            'conversations': item['conversations']
-        } for item in batch]
+# # Helper method to process data in batches (optional)
+#     def process_batch(self, batch):
+#         return [{
+#             'image': item['image'],
+#             'conversations': item['conversations']
+#         } for item in batch]
 
     def __len__(self):
-        return len(self.list_data_dict)
+        # return len(self.list_data_dict)
+        return len(self.train_data)
 
     @property
     def lengths(self):
+        rank0_print("in Lengths...")
         length_list = []
-        for sample in self.list_data_dict:
+        # for sample in self.list_data_dict:
+        for sample in self.train_data:
             img_tokens = 128 if 'image' in sample else 0
             length_list.append(sum(len(conv['value'].split()) for conv in sample['conversations']) + img_tokens)
         return length_list
 
-    @property
-    def modality_lengths(self):
-        length_list = []
-        for sample in self.list_data_dict:
-            cur_len = sum(len(conv['value'].split()) for conv in sample['conversations'])
-            cur_len = cur_len if 'image' in sample else -cur_len
-            length_list.append(cur_len)
-        return length_list
+    # @property
+    # def modality_lengths(self):
+    #     rank0_print("in Modality Lengths...")
+
+    #     length_list = []
+    #     # for sample in self.list_data_dict:
+    #     for sample in self.train_data:
+    #         cur_len = sum(len(conv['value'].split()) for conv in sample['conversations'])
+    #         cur_len = cur_len if 'image' in sample else -cur_len
+    #         length_list.append(cur_len)
+    #     return length_list
 
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        sources = self.list_data_dict[i]
+        # sources = self.list_data_dict[i]
+        item=self.train_data[i]
+        # sources=[item]
+        # rank0_print("In GetItem:",i)
         if isinstance(i, int):
-            sources = [sources]
+            sources = [item]
         assert len(sources) == 1, "Don't know why it is wrapped to a list"
-        
+        # rank0_print(sources[0])
         if 'image' in sources[0]:
             # For Huggingface datasets, the image is already loaded
             image = sources[0]['image']
@@ -765,13 +777,13 @@ class HuggingfaceSupervisedDataset(Dataset):
         data_dict = preprocess(
             sources,
             self.tokenizer,
-            has_image=('image' in self.list_data_dict[i]))
+            has_image=('image' in sources))
             
         if isinstance(i, int):
             data_dict = dict(input_ids=data_dict["input_ids"][0],
                            labels=data_dict["labels"][0])
 
-        if 'image' in self.list_data_dict[i]:
+        if 'image' in sources:
             data_dict['image'] = image
         elif self.data_args.is_multimodal:
             crop_size = self.data_args.image_processor.crop_size
